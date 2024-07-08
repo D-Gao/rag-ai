@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { Document } from '@langchain/core/documents';
 import { BaseStoreInterface } from '@langchain/core/stores';
 import { Redis, RedisOptions } from 'ioredis';
@@ -116,7 +117,7 @@ export class RedisDocstore implements BaseStoreInterface<string, Document> {
 
   async deleteAll(): Promise<void> {
     return new Promise((resolve, reject) => {
-      let cursor = '0';
+      const cursor = '0';
 
       const scanCallback = (err, result) => {
         if (err) {

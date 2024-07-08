@@ -50,7 +50,7 @@ export class ChatService {
               content: chunk?.content,
             },
           };
-          yield `data: ${JSON.stringify(message)} \n\n`;
+          yield `${JSON.stringify(message)} \n\n`;
         }
       })(),
     );
@@ -126,11 +126,11 @@ export class ChatService {
           }
         }
 
-        const docsChunk = {
+        /* const docsChunk = {
           type: 'relevant_documents',
           relevant_documents: relevant_docs,
         };
-        yield `data: ${JSON.stringify(docsChunk)} \n\n`;
+        yield `${JSON.stringify(docsChunk)} \n\n`; */
       })(),
     );
   }
@@ -172,7 +172,6 @@ export class ChatService {
       loadedDocs.forEach((doc) => (doc.metadata.source = file.originalname));
       docs.push(...loadedDocs);
     }
-    console.log(docs);
     await this.retriever.addDocuments(docs);
     console.log(`${docs.length} documents added to collection.`);
   };
