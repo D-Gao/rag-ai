@@ -8,3 +8,9 @@ export interface ChatMessage {
   endTime: number;
   relevantDocs?: RelevantDocument[];
 }
+
+export interface IngestDocumentType {
+  originalname: string;
+  fileBuffer: Buffer;
+  fileType: string;
+}

@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Injectable, Logger } from '@nestjs/common';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { UpdateChatDto } from './dto/update-chat.dto';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAI, OpenAIEmbeddings } from '@langchain/openai';
 import { Readable } from 'stream';
 import { ParentDocumentRetriever } from 'langchain/retrievers/parent_document';
 import {
@@ -21,6 +21,9 @@ import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { CSVLoader } from 'langchain/document_loaders/fs/csv';
 import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { JSONLoader } from 'langchain/document_loaders/fs/json';
+import { ChromaClient } from 'chromadb';
+import { createRedisClient } from './embedding/redis.doc.store';
+import { IngestDocumentType } from 'src/types/chat';
 
 @Injectable()
 export class ChatService {
@@ -135,10 +138,7 @@ export class ChatService {
     );
   }
 
-  async createKB(
-    uploadedFiles: Express.Multer.File[],
-    createKnowledgeDto: CreateKnowledgeDto,
-  ) {
+  async createKB(uploadedFiles: IngestDocumentType[]) {
     try {
       await this.ingestDocument(uploadedFiles);
     } catch (e) {
@@ -147,23 +147,106 @@ export class ChatService {
     return true;
   }
 
-  findAll() {
-    return `This action returns all chat`;
+  async findAllCollections() {
+    const result = await fetch(
+      this.configService.get('CHROMADB_URL') + '/api/v1/collections',
+    );
+    const data = await result.json();
+
+    /* console.log(this.retriever.vectorstore);
+    console.log(
+      await this.retriever.docstore.mget([
+        'f715f0eb-d191-4587-8b45-ff16f7615de8',
+      ]),
+    ); */
+    /* this.retriever.vectorstore.delete({
+      ids: ['8eefbc6f-3ab1-4a59-8bfb-9baf63148e70'],
+    }); */
+    const client = new ChromaClient({
+      path: this.configService.get<string>('CHROMADB_URL'),
+    });
+
+    const col = await client.getCollection({ name: 'gao-collection' });
+    /* await col.
+    console.log(await col.count()); */
+    //await col.delete({ ids: ['87cc58a0-3d57-11ef-a8ea-0377a9f8b16a'] });
+
+    return data;
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} chat`;
+  async findOneCollection(collectionName: string) {
+    const client = new ChromaClient({
+      path: this.configService.get<string>('CHROMADB_URL'),
+    });
+    const col = await client.getCollection({ name: collectionName });
+    console.log(await col.get());
+    const colDetails = await col.get();
+
+    //console.log(colDetails);
+    const metadatas = colDetails.metadatas;
+    const docs: { name: string; type: string }[] = [];
+
+    metadatas.forEach((chunk) => {
+      const el = {
+        name: chunk.source as string,
+        type: chunk.blobType as string,
+      };
+      const isDuplicate = docs.some(
+        (item) => item.name === el.name && item.type === el.type,
+      );
+      if (!isDuplicate) docs.push(el);
+    });
+
+    console.log(docs);
+
+    return docs;
   }
 
   update(id: number, updateChatDto: UpdateChatDto) {
     return `This action updates a #${updateChatDto} chat`;
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} chat`;
+  async removeDocumentsFromCollections(colname: string, docname: string) {
+    const client = new ChromaClient({
+      path: this.configService.get<string>('CHROMADB_URL'),
+    });
+    const col = await client.getCollection({ name: colname });
+
+    const idsToDelete = [];
+    const idsRedisToDelete = new Set<string>();
+    const colDetails = await col.get();
+    const ids = colDetails.ids;
+    const metadatas = colDetails.metadatas;
+
+    for (let i = 0; i < ids.length; i++) {
+      if (metadatas[i].source === docname) {
+        idsToDelete.push(ids[i]);
+        idsRedisToDelete.add(metadatas[i].doc_id as string);
+      }
+    }
+    console.log(idsRedisToDelete);
+    //delete from chromadb
+    const res = await col.delete({ ids: idsToDelete });
+    //delete from redis
+
+    this.deleteKeys(colname, idsRedisToDelete);
+    return `removed #${colname + docname}`;
   }
 
-  private ingestDocument = async (files: Express.Multer.File[]) => {
+  private async deleteKeys(colname: string, keys: Set<string>) {
+    const keysArray = [...keys];
+    const redisInstance = createRedisClient();
+    try {
+      for (let i = 0; i < keysArray.length; i++) {
+        await redisInstance.del(colname + ':' + keysArray[i]);
+      }
+    } catch (error) {
+      console.error(`Error deleting keys:`, error);
+    } finally {
+      redisInstance.disconnect();
+    }
+  }
+  ingestDocument = async (files: IngestDocumentType[]) => {
     const docs = [];
 
     for (const file of files) {
@@ -176,7 +259,7 @@ export class ChatService {
     console.log(`${docs.length} documents added to collection.`);
   };
 
-  private loadDocuments = async (file: Express.Multer.File) => {
+  private loadDocuments = async (file: IngestDocumentType) => {
     const Loaders = {
       pdf: PDFLoader,
       json: JSONLoader,
@@ -193,7 +276,7 @@ export class ChatService {
     if (!Loaders[ext]) {
       throw new Error(`Unsupported file type: ${ext}`);
     }
-    const blob = new Blob([file.buffer], { type: file.mimetype });
+    const blob = new Blob([file.fileBuffer], { type: file.fileType });
     return new Loaders[ext](blob).load();
   };
 }
